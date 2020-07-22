@@ -20,23 +20,51 @@ class MotionCaptureOperator(bpy.types.Operator):
     debug_quats = [[] for x in range(10)]
 
     def updateBone(self, ip, machine_id, bus_num, sens_num, sensor):
+        settings = bpy.context.scene.mc_settings
         if 'bone' in sensor:
             bone = sensor['bone']
-            if "forward" in sensor and "offset"in sensor and "matrix" in sensor and "position" in sensor:
-                forward = sensor['forward'].to_track_quat('X', 'Z')
+            if "mirror"in sensor and "forward" in sensor and "offset"in sensor and "matrix" in sensor and "position" in sensor:
+                forward_vec = settings.dir_enum[sensor['forward']]
+                forward = mathutils.Vector((0,1,0)).rotation_difference(forward_vec) 
 
                 position1 = sensor['offset'].conjugated() @ sensor['position']
+
+                # Mirror sensor axes
+                if sensor['mirror'] == 'X':    
+                    position1.x *= -1
+                    position1.w *= -1
+                if sensor['mirror'] == 'Y':    
+                    position1.y *= -1
+                    position1.w *= -1
+                if sensor['mirror'] == 'Z':    
+                    position1.z *= -1
+                    position1.w *= -1   
+                # Global Mirror X    
+                if settings.flip_x:    
+                    position1.x *= -1
+                    position1.w *= -1    
+                # Swap Left <--> Right 
+                if settings.swap_l_r:    
+                    position1.y *= -1
+                    position1.x *= -1
+                    position1.w *= -1
+
                 position2 = forward @ position1 
                 position3 = position2 @ (forward.rotation_difference(sensor['matrix']))
 
-                bone.matrix = position3.to_matrix().to_4x4()
+                (translation, rotatation, scale) = bone.matrix.decompose()
+                bone.matrix = mathutils.Matrix.Translation(translation) @ position3.to_matrix().to_4x4() 
 
-                # self.debugQuat(0, index, forward)
-                # self.debugQuat(1, index, sensor['matrix'])
-                # self.debugQuat(2, index, sensor['position'])
-                # self.debugQuat(3, index, position1)
-                # self.debugQuat(4, index, position2)
-                # self.debugQuat(5, index, position3)
+                bone.keyframe_insert(data_path="rotation_quaternion")
+
+                if (settings.machine_ids[ip], bus_num, sens_num) == settings.keyToSensors(settings.selected_id):
+                    index = 0
+                    # self.debugQuat(0, index, forward)
+                    # self.debugQuat(1, index, sensor['matrix'])
+                    # self.debugQuat(2, index, sensor['position'])
+                    # self.debugQuat(3, index, position1)
+                    # self.debugQuat(4, index, position2)
+                    # self.debugQuat(5, index, position3)
     
     def debugQuat(self, num, index, quat):
         settings = bpy.context.scene.mc_settings
@@ -78,7 +106,6 @@ class MotionCaptureOperator(bpy.types.Operator):
                                 if bpy.context.scene.mc_settings.setSensorVal(peer_ip, data[1], data[2], "position", mathutils.Quaternion(quat).normalized()):
                                     if not str(peer_ip)+str(data[1])+str(data[2]) in self.sensors_connected:
                                         self.sensors_connected.append(str(peer_ip)+str(data[1])+str(data[2]))
-                                #print(str(data))
                             # Unique Identifier
                             elif data[0] == 9 and len(data) == 7:
                                 bpy.context.scene.mc_settings.addSensor(peer_ip, str(data[1:8]))
@@ -100,7 +127,6 @@ class MotionCaptureOperator(bpy.types.Operator):
                     break
                 if len(readable) == 0: break
 
-
         # Update bone rotations
         bpy.context.scene.mc_settings.iterateSensors(self.updateBone)
 
@@ -114,14 +140,17 @@ class MotionCaptureOperator(bpy.types.Operator):
         return {'PASS_THROUGH'}
     
     def execute(self, context):
-
+        bpy.app.handlers.frame_change_pre.append(self.extend_playback)
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.setblocking(0)
         try:
             self.server.bind((self.get_ip_address(), context.scene.mc_settings.port))
         except OSError:
             self.report({'ERROR'}, 'Socket in use - please try again')
             self.cancel(context)
+            context.scene.mc_settings.start = False
+            return {'CANCELLED'}
         self.server.listen(5)
         
         print("Starting")
@@ -130,12 +159,19 @@ class MotionCaptureOperator(bpy.types.Operator):
         context.scene.mc_settings.loadMappings()
         context.scene.mc_settings.iterateSensors(context.scene.mc_settings.initPoseFunc)
         
+        bpy.context.scene.mc_settings.fps = 0.0
+        
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
     def cancel(self, context):
+        # close open sockets
+        for sock in self.inputs:
+            sock.close()
+        self.inputs.clear()
+
         wm = context.window_manager
         if hasattr(self, '_timer'):
             wm.event_timer_remove(self._timer)
@@ -159,6 +195,11 @@ class MotionCaptureOperator(bpy.types.Operator):
         conn, addr = s.accept()
         print('Connected by', addr)
         return conn, addr
+
+    def extend_playback(self, scene, last):
+        if scene.frame_current == scene.frame_end-1 and scene.mc_settings.start:
+            scene.frame_end = scene.frame_end+10
+            #bpy.ops.screen.animation_cancel(restore_frame=False)    
 
 register, unregister = bpy.utils.register_classes_factory([MotionCaptureOperator])
 

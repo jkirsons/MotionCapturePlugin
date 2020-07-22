@@ -1,4 +1,4 @@
-import bpy, mathutils, math, json
+import bpy, mathutils, math, json, functools, time
 
 class SetBoneOperator(bpy.types.Operator):
     """Set Bone"""
@@ -20,22 +20,8 @@ class SetTPoseOperator(bpy.types.Operator):
     bl_idname = "wm.mocap_set_tpose_operator"
     bl_label = "Set T-Pose"
     clear: bpy.props.BoolProperty(name="Clear", default=False)
-    
-    def initBonePos(self, bone):
-        if bone.name in self.settings.bone_names:
-            # Keep reference to this bone
-            self.settings.bones.append(bone)
-            index = self.settings.bone_names.index(bone.name)        
-            if self.clear:
-                self.settings.offset[index] = mathutils.Quaternion()
-            else:
-                bone.rotation_mode = 'QUATERNION'
-                bone.rotation_quaternion = mathutils.Quaternion()
-                bpy.context.view_layer.update()
-                self.settings.matrix[index] = bone.matrix.to_quaternion()
-                self.settings.offset[index] = self.settings.position[index]
-            return True
-        return False
+    timer: bpy.props.IntProperty(name="Timer", default=0)
+    time = 0
 
     def setInit(self, bone):
         bone.rotation_mode = 'QUATERNION'
@@ -46,8 +32,8 @@ class SetTPoseOperator(bpy.types.Operator):
             bpy.context.view_layer.update()
         for b in bone.children:
             self.updateBones(b, func)
-            
-    def execute(self, context):
+
+    def setTPose(self, context):
         for bone in context.scene.mc_settings.obj.pose.bones:
             # Find parent bone and iterate through children
             if bone.parent == None:
@@ -55,7 +41,31 @@ class SetTPoseOperator(bpy.types.Operator):
         bpy.context.view_layer.update()
         context.scene.mc_settings.iterateSensors(context.scene.mc_settings.initPoseFunc)
 
+    def modal(self, context, event):
+        if event.type == 'TIMER':  
+            if int(time.time() - self.start) > self.time:
+                self.time += 1
+                if self.time >= self.timer:
+                    self.setTPose(context)
+                    self.report({'INFO'},"T-Pose Set!")
+                    if hasattr(self, '_timer'):
+                        wm = context.window_manager
+                        wm.event_timer_remove(self._timer)
+                    return {'CANCELLED'}
+                self.report({'INFO'},"%d" % (self.timer - self.time))
+        return {'PASS_THROUGH'}
 
+    def execute(self, context):
+        if self.timer > 0:
+            self.time = 0
+            self.start = time.time()
+            wm = context.window_manager
+            self._timer = wm.event_timer_add(1, window=context.window)
+            wm.modal_handler_add(self)
+            self.report({'INFO'},"%d" % self.timer)
+            return {'RUNNING_MODAL'}
+
+        self.setTPose(context)
         return {'FINISHED'}       
 
 register, unregister = bpy.utils.register_classes_factory([SetBoneOperator, SetTPoseOperator])

@@ -11,23 +11,20 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
     def draw(self, context):
         settings = context.scene.mc_settings
         
-        label = "Stop Capture" if settings.start else "Start Capture"
+        label = ("Stop Capture   (FPS: %.2f)" % settings.fps) if settings.start else "Start Capture"
         
+
         row = self.layout.row()
-        row.operator('wm.mocap_install_packages_operator')
-        row = self.layout.row()
-        row.prop(settings, 'start', text=label, toggle=True, icon="RESTRICT_VIEW_OFF")   
-        row = self.layout.row()    
-        row.prop(settings, "fps")
-        row.prop(settings, 'port')
-        
-        self.layout.separator()
+        row.prop(settings, 'start', text=label, toggle=True, icon="OUTLINER_OB_CAMERA")   
+
         box = self.layout.box()
         box.label(text="Pose Config:")
         box.prop(settings, "obj")
 
         row = box.row()
-        row.operator('wm.mocap_set_tpose_operator')
+        row.operator('wm.mocap_set_tpose_operator', icon="OUTLINER_OB_ARMATURE")
+        timer = row.operator('wm.mocap_set_tpose_operator', text="T-Pose Timer", icon="TIME")
+        timer.timer = 3
         
         self.layout.separator()
         box = self.layout.box()
@@ -36,7 +33,7 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
         row.enabled = True if bpy.context.active_pose_bone is not None else False
         row = box.row()
         row.enabled = True if bpy.context.active_pose_bone is not None else False
-        bone = row.operator('wm.mocap_set_bone_operator')
+        bone = row.operator('wm.mocap_set_bone_operator', icon="POSE_HLT")
         if context.scene.mc_settings.selected_id != '':
             bone.sensor_str, bone.sensor_x, bone.sensor_y = context.scene.mc_settings.keyToSensors(context.scene.mc_settings.selected_id)
 
@@ -53,11 +50,21 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
         row = box.row()
         row.prop(settings, "selected_id")
         
-        box = self.layout
-        box.prop(settings, "ui_vector")
-        box.prop(settings, "ui_track")
-        box.prop(settings, "ui_up")
+        row.separator()
+        box = self.layout.box()
+        box.label(text="IMU Physical Orientation:")
+        row = box.row()
+        row.prop(settings, "ui_forward")
+        row = box.row()
+        row.prop(settings, "ui_mirror")
+
+        self.layout.prop(settings, "flip_x")
+        self.layout.prop(settings, "swap_l_r")
         
+        self.layout.separator()
+        self.layout.separator()
+        self.layout.operator('wm.mocap_install_packages_operator', icon="IMPORT")        
+        self.layout.prop(settings, 'port')
         self.layout.prop(settings, "template")
 
 
