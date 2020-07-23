@@ -197,8 +197,8 @@ class MotionCaptureOperator(bpy.types.Operator):
         return conn, addr
 
     def extend_playback(self, scene, last):
-        if scene.frame_current == scene.frame_end-1 and scene.mc_settings.start:
-            scene.frame_end = scene.frame_end+10
+        if scene.frame_current >= scene.frame_end-100 and scene.mc_settings.start:
+            scene.frame_end = scene.frame_end+100
             #bpy.ops.screen.animation_cancel(restore_frame=False)    
 
 register, unregister = bpy.utils.register_classes_factory([MotionCaptureOperator])
