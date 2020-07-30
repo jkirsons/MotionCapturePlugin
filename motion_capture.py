@@ -6,12 +6,17 @@ class MotionCaptureOperator(bpy.types.Operator):
     """Start Motion Capture"""
     bl_idname = "wm.mocap_operator"
     bl_label = "Motion Capture Operator"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {'REGISTER'}
 
     # Framerate Counter
     frame = 0
     start = time.time()
+    start_rec_time = 0
     sensors_connected = []
+
+    frame_number = 0
+    recording = {}
+    buttons = {}
     
     # Socket Server
     inputs = []
@@ -49,22 +54,29 @@ class MotionCaptureOperator(bpy.types.Operator):
                     position1.x *= -1
                     position1.w *= -1
 
-                position2 = forward @ position1 
+                position2 = forward @ position1
                 position3 = position2 @ (forward.rotation_difference(sensor['matrix']))
 
                 (translation, rotatation, scale) = bone.matrix.decompose()
                 bone.matrix = mathutils.Matrix.Translation(translation) @ position3.to_matrix().to_4x4() 
-
-                bone.keyframe_insert(data_path="rotation_quaternion")
+                
+                if bpy.context.scene.mc_settings.start_rec:
+                    #bone.keyframe_insert(data_path="rotation_quaternion")
+                    if not bone in self.recording:
+                        self.recording[bone] = []
+                    # animation records local rotations
+                    #self.recording[bone].append([self.frame_number, sensor['matrix'].rotation_difference(bone.matrix.to_quaternion())])
+                    quat = bone.matrix_basis.to_quaternion()
+                    self.recording[bone].append([self.frame_number, quat])
 
                 if (settings.machine_ids[ip], bus_num, sens_num) == settings.keyToSensors(settings.selected_id):
                     index = 0
-                    # self.debugQuat(0, index, forward)
-                    # self.debugQuat(1, index, sensor['matrix'])
-                    # self.debugQuat(2, index, sensor['position'])
-                    # self.debugQuat(3, index, position1)
-                    # self.debugQuat(4, index, position2)
-                    # self.debugQuat(5, index, position3)
+                    self.debugQuat(0, index, forward)
+                    self.debugQuat(1, index, sensor['matrix'])
+                    self.debugQuat(2, index, sensor['position'])
+                    self.debugQuat(3, index, position1)
+                    self.debugQuat(4, index, position2)
+                    self.debugQuat(5, index, position3)
     
     def debugQuat(self, num, index, quat):
         settings = bpy.context.scene.mc_settings
@@ -77,11 +89,25 @@ class MotionCaptureOperator(bpy.types.Operator):
                 bpy.context.collection.objects.link(ob)
                 self.debug_quats[num].append(ob)
         self.debug_quats[num][index].matrix_world = quat.to_matrix().to_4x4()
-        self.debug_quats[num][index].location[0] = index * - 3 - 1 
-        self.debug_quats[num][index].location[1] = - num * 3 - 1
+        self.debug_quats[num][index].location[0] = -1 
+        self.debug_quats[num][index].location[1] = -num - 1
     
     # The main "loop"
     def modal(self, context, event):
+        for id in self.buttons:
+            if self.buttons[id] == 1 and id in context.scene.mc_settings.button_map:
+                if context.scene.mc_settings.button_map[id] == 1: #"T-Pose":
+                    bpy.ops.wm.mocap_set_tpose_operator(timer=3)
+                if context.scene.mc_settings.button_map[id] == 2: #"Start/Stop":
+                    context.scene.mc_settings.start_rec = not context.scene.mc_settings.start_rec
+                self.buttons[id] = 0
+        
+        if (not context.scene.mc_settings.start_rec or not context.scene.mc_settings.start) and self.start_rec_time != 0:
+            self.saveRecording()
+
+        if context.scene.mc_settings.start_rec and self.start_rec_time == 0:
+            self.start_rec_time = time.time()
+
         if not context.scene.mc_settings.start:
             self.cancel(context)
             return {'CANCELLED'}
@@ -109,6 +135,10 @@ class MotionCaptureOperator(bpy.types.Operator):
                             # Unique Identifier
                             elif data[0] == 9 and len(data) == 7:
                                 bpy.context.scene.mc_settings.addSensor(peer_ip, str(data[1:8]))
+                            # Button pressed
+                            elif data[0] == 2 and data[1] == 1:
+                                self.buttons[bpy.context.scene.mc_settings.machine_ids[peer_ip]] = 1
+                                print("Button: " + str(peer_ip))
                             else:
                                 print("Invalid Transaction ID: " + str(data[0]) + " Length: " + str(len(data)) + " Date: " + str(time.time()))
 
@@ -126,6 +156,19 @@ class MotionCaptureOperator(bpy.types.Operator):
                     s.close()
                     break
                 if len(readable) == 0: break
+
+        if context.scene.mc_settings.start_rec:
+            time_now = (time.time() - self.start_rec_time) * bpy.context.scene.render.fps
+            time_rem, time_int = math.modf(time_now)
+            if len(self.recording) > 0 and time_int in self.recording[next(iter(self.recording))] and time_rem > 0.8:
+                self.frame_number = time_int + 1
+            elif len(self.recording) > 0 and time_int > 1 \
+                and not time_int-1 in self.recording[next(iter(self.recording))] \
+                and time_rem < 0.2:
+                self.frame_number = time_int - 1
+            else:
+                self.frame_number = time_int
+            context.scene.mc_settings.frame_number = self.frame_number
 
         # Update bone rotations
         bpy.context.scene.mc_settings.iterateSensors(self.updateBone)
@@ -160,11 +203,32 @@ class MotionCaptureOperator(bpy.types.Operator):
         context.scene.mc_settings.iterateSensors(context.scene.mc_settings.initPoseFunc)
         
         bpy.context.scene.mc_settings.fps = 0.0
+        self.start_rec_time = 0
         
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+
+    def saveRecording(self):
+        recNumber = 1
+        while 'Recording'+str(recNumber) in bpy.data.actions:
+            recNumber += 1
+
+        a = bpy.data.actions.new('Recording'+str(recNumber))
+
+        for bone in self.recording:
+            for i in range(0,4):
+                fc = a.fcurves.new('pose.bones["'+bone.name+'"].rotation_quaternion', index=i, action_group=bone.name)
+                fc.keyframe_points.add(count=len(self.recording[bone]))
+                vals = [v[1][i] for v in self.recording[bone]]
+                keys = [v[0] for v in self.recording[bone]]
+                fc.keyframe_points.foreach_set("co", [x for co in zip(keys, vals) for x in co])
+                fc.update()
+
+        self.recording.clear()
+        self.start_rec_time = 0
 
     def cancel(self, context):
         # close open sockets
@@ -178,7 +242,8 @@ class MotionCaptureOperator(bpy.types.Operator):
         self.server.close()
         print("Stopping")
         context.scene.mc_settings.fps = 0.0
-        self.sensors_connected.clear()        
+        self.sensors_connected.clear()
+        
         
     def get_ip_address(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

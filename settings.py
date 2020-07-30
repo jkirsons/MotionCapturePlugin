@@ -2,9 +2,12 @@ import bpy, mathutils, math, json
 
 class MotionCaptureSettings(bpy.types.PropertyGroup):
     config_file_name = 'Config_main'
+    mapping_file_name = 'Config_buttons'
 
     # Active sensors (ESP32's)
     machine_ids = {}
+
+    button_map = {}
 
     # Active sensor data
     sensor_data = {}
@@ -44,6 +47,12 @@ class MotionCaptureSettings(bpy.types.PropertyGroup):
                  "Y": mathutils.Vector((0,1,0)), "-Y": mathutils.Vector((0,-1,0)), 
                  "Z": mathutils.Vector((0,0,1)), "-Z": mathutils.Vector((0,0,-1)) }
 
+    button_function_enum = [
+        ("NONE", "none", "", 0),
+        ("TPOSE", "T-Pose", "", 1),
+        ("START_STOP", "Start/Stop", "", 2),
+    ]
+
     class ComplexEncoder(json.JSONEncoder):
         def default(self, obj):
             if isinstance(obj, mathutils.Vector):
@@ -65,7 +74,18 @@ class MotionCaptureSettings(bpy.types.PropertyGroup):
             bpy.ops.wm.mocap_set_tpose_operator('EXEC_DEFAULT')
             bpy.ops.wm.mocap_operator('EXEC_DEFAULT')    
             
-    def save(self, val):
+    def save(self, val, name=None):
+        if name == None:
+            name = self.config_file_name
+        if not name in bpy.data.texts:
+            bpy.data.texts.new(name)
+        bpy.data.texts[name].clear()
+        bpy.data.texts[name].write(json.dumps(val, cls=self.ComplexEncoder))
+
+        # update sensors
+        self.iterateSensors(self.initPoseFunc)
+
+    def save_buttons(self, val):
         if not self.config_file_name in bpy.data.texts:
             bpy.data.texts.new(self.config_file_name)
         bpy.data.texts[self.config_file_name].clear()
@@ -119,8 +139,22 @@ class MotionCaptureSettings(bpy.types.PropertyGroup):
         # update sensors
         self.iterateSensors(self.initPoseFunc)
 
+    def set_button_func(self, value):
+        m_id, _, _ = self.keyToSensors(self.selected_id)
+        self.button_map[m_id] = value
+        self.save(self.button_map, self.mapping_file_name)
+
+    def get_button_func(self):
+        m_id, _, _ = self.keyToSensors(self.selected_id)
+        if self.button_map == {}: self.loadButtonMappings()
+        if m_id in self.button_map:
+            return self.button_map[m_id]
+        return 0
+
     fps: bpy.props.FloatProperty(name="FPS")
+    frame_number: bpy.props.IntProperty(name="Frame")
     start: bpy.props.BoolProperty(name="Start Capture", update=update_function, default=False)
+    start_rec: bpy.props.BoolProperty(name="Start Recording", default=False)
     port: bpy.props.IntProperty(name="Port", default=61111)
     
     obj: bpy.props.PointerProperty(name="Rig", type=bpy.types.Object)
@@ -142,6 +176,7 @@ class MotionCaptureSettings(bpy.types.PropertyGroup):
         return ret
 
     selected_id: bpy.props.EnumProperty(items=idCallback, name="Node")
+    button_function: bpy.props.EnumProperty(items=button_function_enum, name="Hub Button", get=get_button_func, set=set_button_func)
 
     # IMU pyhsical orientation
     ui_forward: bpy.props.EnumProperty(items=track_enum, name="Forward",  get=get_val_T, set=set_val_T)
@@ -159,6 +194,10 @@ class MotionCaptureSettings(bpy.types.PropertyGroup):
                     for y, sensor in enumerate(imu):
                         for value in sensor:
                             self.mapping[machine_id]['imu'][x][y][value] = sensor[value]
+    
+    def loadButtonMappings(self):
+        if self.mapping_file_name in bpy.data.texts and bpy.data.texts[self.mapping_file_name].lines[0].body != "":
+            self.button_map = json.loads(bpy.data.texts[self.mapping_file_name].lines[0].body)
 
     # iterate all sensors and call a callback function
     def iterateSensors(self, func):

@@ -11,11 +11,13 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
     def draw(self, context):
         settings = context.scene.mc_settings
         
-        label = ("Stop Capture   (FPS: %.2f)" % settings.fps) if settings.start else "Start Capture"
-        
-
+        label = ("Stop Server   (FPS: %.2f)" % settings.fps) if settings.start else "Start Server"
         row = self.layout.row()
-        row.prop(settings, 'start', text=label, toggle=True, icon="OUTLINER_OB_CAMERA")   
+        row.prop(settings, 'start', text=label, toggle=True, icon="PARTICLE_DATA")
+
+        label = ("Stop Recording - %.0f" % settings.frame_number) if settings.start_rec else "Start Recording"
+        row = self.layout.row()
+        row.prop(settings, 'start_rec', text=label, toggle=True, icon="OUTLINER_OB_CAMERA")
 
         box = self.layout.box()
         box.label(text="Pose Config:")
@@ -24,7 +26,7 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
         row = box.row()
         row.operator('wm.mocap_set_tpose_operator', icon="OUTLINER_OB_ARMATURE")
         timer = row.operator('wm.mocap_set_tpose_operator', text="T-Pose Timer", icon="TIME")
-        timer.timer = 3
+        timer.timer = 5
         
         self.layout.separator()
         box = self.layout.box()
@@ -49,6 +51,9 @@ class OBJECT_PT_IMUPanel(bpy.types.Panel):
         
         row = box.row()
         row.prop(settings, "selected_id")
+
+        row = box.row()
+        row.prop(settings, "button_function")
         
         row.separator()
         box = self.layout.box()
